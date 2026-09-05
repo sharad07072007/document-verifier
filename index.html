@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scrutiny — Document Forensics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#12161c;
+    --panel:#1a212b;
+    --panel-2:#212a35;
+    --line:#333f4d;
+    --paper:#efece2;
+    --paper-shadow:#00000055;
+    --text:#e9e6da;
+    --muted:#8f97a3;
+    --scan:#7fd8b0;
+    --scan-dim:#3f6f5e;
+    --warn:#e8a33d;
+    --danger:#e0584f;
+    --radius:3px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--ink);
+    color:var(--text);
+    font-family:'Space Grotesk',sans-serif;
+    line-height:1.5;
+    min-height:100vh;
+  }
+  .wrap{
+    max-width:960px;
+    margin:0 auto;
+    padding:56px 24px 80px;
+  }
+  header{
+    margin-bottom:40px;
+  }
+  header h1{
+    font-size:2.4rem;
+    font-weight:700;
+    letter-spacing:-0.01em;
+    margin:0 0 10px;
+  }
+  header p{
+    color:var(--muted);
+    max-width:46ch;
+    margin:0;
+    font-size:1.02rem;
+  }
+
+  /* Backend connection bar */
+  .api-row{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-bottom:16px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:.8rem;
+  }
+  .api-row label{ color:var(--muted); }
+  .api-row input{
+    flex:1;
+    max-width:320px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    color:var(--text);
+    padding:8px 10px;
+    border-radius:2px;
+    font-family:inherit;
+    font-size:inherit;
+  }
+  .api-status{ color:var(--muted); }
+  .api-status.ok{ color:var(--scan); }
+  .api-status.fail{ color:var(--danger); }
+
+  /* Dropzone */
+  .dropzone{
+    position:relative;
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    background:var(--panel);
+    padding:64px 24px;
+    text-align:center;
+    cursor:pointer;
+    overflow:hidden;
+    transition:border-color .15s ease, background .15s ease;
+  }
+  .dropzone:hover, .dropzone.drag{
+    border-color:var(--scan);
+    background:var(--panel-2);
+  }
+  .dropzone .beam{
+    position:absolute;
+    top:0; left:-30%;
+    width:30%; height:100%;
+    background:linear-gradient(90deg, transparent, rgba(127,216,176,0.08), transparent);
+    animation:sweep 3.2s ease-in-out infinite;
+    pointer-events:none;
+  }
+  @keyframes sweep{
+    0%{ left:-30%; }
+    50%{ left:100%; }
+    100%{ left:100%; }
+  }
+  .dropzone h2{
+    font-size:1.1rem;
+    font-weight:600;
+    margin:0 0 6px;
+  }
+  .dropzone p{
+    color:var(--muted);
+    margin:0;
+    font-size:.92rem;
+  }
+  .dropzone input{ display:none; }
+  .icon-doc{
+    width:40px; height:52px;
+    margin:0 auto 20px;
+    border:1.5px solid var(--scan);
+    border-radius:2px;
+    position:relative;
+  }
+  .icon-doc::before, .icon-doc::after{
+    content:'';
+    position:absolute;
+    left:8px; right:8px;
+    height:2px;
+    background:var(--scan-dim);
+  }
+  .icon-doc::before{ top:16px; }
+  .icon-doc::after{ top:26px; }
+
+  /* Results */
+  #results{
+    margin-top:40px;
+    display:none;
+  }
+  #results.active{ display:block; }
+  .grid{
+    display:grid;
+    grid-template-columns:1.1fr 1fr;
+    gap:24px;
+  }
+  @media (max-width:720px){
+    .grid{ grid-template-columns:1fr; }
+  }
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:20px;
+  }
+  .panel h3{
+    font-size:.78rem;
+    font-weight:600;
+    color:var(--muted);
+    margin:0 0 14px;
+    font-family:'JetBrains Mono',monospace;
+  }
+
+  .viewer{
+    background:var(--paper);
+    border-radius:2px;
+    padding:12px;
+    box-shadow:0 8px 24px var(--paper-shadow);
+  }
+  .viewer .stage{
+    position:relative;
+    width:100%;
+    background:#000;
+    border-radius:1px;
+    overflow:hidden;
+  }
+  .viewer canvas, .viewer img{
+    display:block;
+    width:100%;
+    height:auto;
+  }
+  .toggle-row{
+    display:flex;
+    gap:8px;
+    margin-top:12px;
+  }
+  .toggle-btn{
+    flex:1;
+    font-family:'JetBrains Mono',monospace;
+    font-size:.75rem;
+    padding:8px 10px;
+    border:1px solid #00000030;
+    background:transparent;
+    color:#20242b;
+    border-radius:2px;
+    cursor:pointer;
+  }
+  .toggle-btn.active{
+    background:#20242b;
+    color:var(--paper);
+  }
+
+  /* Gauge */
+  .gauge-row{
+    display:flex;
+    align-items:center;
+    gap:18px;
+    margin-bottom:16px;
+  }
+  .gauge-num{
+    font-family:'JetBrains Mono',monospace;
+    font-size:2.2rem;
+    font-weight:600;
+  }
+  .gauge-label{
+    font-size:.85rem;
+    color:var(--muted);
+  }
+  .gauge-label strong{
+    display:block;
+    color:var(--text);
+    font-size:1rem;
+    font-weight:500;
+    margin-top:2px;
+  }
+
+  .checklist{
+    list-style:none;
+    margin:0 0 20px;
+    padding:0;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+  }
+  .checklist li{
+    display:flex;
+    gap:10px;
+    align-items:flex-start;
+    font-size:.92rem;
+  }
+  .mark{
+    flex:none;
+    width:18px; height:18px;
+    border-radius:50%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:.7rem;
+    font-family:'JetBrains Mono',monospace;
+    margin-top:1px;
+  }
+  .mark.pass{ background:var(--scan-dim); color:var(--scan); }
+  .mark.warn{ background:#4a3a20; color:var(--warn); }
+  .mark.fail{ background:#4a2624; color:var(--danger); }
+
+  .meta-table{
+    width:100%;
+    border-collapse:collapse;
+    font-family:'JetBrains Mono',monospace;
+    font-size:.82rem;
+  }
+  .meta-table tr{ border-top:1px solid var(--line); }
+  .meta-table tr:first-child{ border-top:none; }
+  .meta-table td{ padding:8px 0; vertical-align:top; }
+  .meta-table td:first-child{ color:var(--muted); width:40%; padding-right:12px; }
+
+  /* Checksum */
+  #checksum{
+    margin-top:40px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:24px;
+  }
+  #checksum h3{
+    font-size:1.05rem;
+    font-weight:600;
+    margin:0 0 4px;
+  }
+  #checksum > p{
+    color:var(--muted);
+    font-size:.9rem;
+    margin:0 0 18px;
+    max-width:60ch;
+  }
+  .csum-row{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+  }
+  .csum-row select, .csum-row input{
+    font-family:'JetBrains Mono',monospace;
+    font-size:.9rem;
+    background:var(--ink);
+    border:1px solid var(--line);
+    color:var(--text);
+    padding:10px 12px;
+    border-radius:2px;
+  }
+  .csum-row select{ flex:none; }
+  .csum-row input{ flex:1; min-width:220px; }
+  .csum-row button{
+    font-family:'JetBrains Mono',monospace;
+    font-size:.85rem;
+    background:var(--scan);
+    color:#0c1712;
+    border:none;
+    padding:10px 18px;
+    border-radius:2px;
+    cursor:pointer;
+    font-weight:600;
+  }
+  #csum-result{
+    margin-top:14px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:.88rem;
+    min-height:1.4em;
+  }
+  #csum-result.pass{ color:var(--scan); }
+  #csum-result.fail{ color:var(--danger); }
+
+  footer{
+    margin-top:56px;
+    padding-top:20px;
+    border-top:1px solid var(--line);
+    color:var(--muted);
+    font-size:.82rem;
+    max-width:70ch;
+  }
+
+  .reset-link{
+    display:inline-block;
+    margin-top:18px;
+    color:var(--muted);
+    font-family:'JetBrains Mono',monospace;
+    font-size:.8rem;
+    cursor:pointer;
+    text-decoration:underline;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .beam{ animation:none; display:none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Scrutiny</h1>
+    <p>Upload a document image or PDF to check for common signs of tampering: editing software signatures, compression inconsistencies, and metadata mismatches.</p>
+  </header>
+
+  <div class="api-row">
+    <label for="apiBase">Backend URL</label>
+    <input type="text" id="apiBase" value="http://localhost:8000" spellcheck="false">
+    <span class="api-status" id="apiStatus">● checking…</span>
+  </div>
+
+  <div class="dropzone" id="dropzone">
+    <div class="beam"></div>
+    <div class="icon-doc"></div>
+    <h2>Drop a document here, or click to browse</h2>
+    <p>Accepts JPG, PNG, or PDF · sent to the Scrutiny API for analysis</p>
+    <input type="file" id="fileInput" accept="image/jpeg,image/png,application/pdf">
+  </div>
+
+  <section id="results">
+    <div class="grid">
+      <div class="panel viewer-panel">
+        <h3>DOCUMENT</h3>
+        <div class="viewer">
+          <div class="stage">
+            <canvas id="canvasOriginal"></canvas>
+            <canvas id="canvasELA" style="display:none;"></canvas>
+          </div>
+          <div class="toggle-row">
+            <button class="toggle-btn active" id="btnOriginal">Original</button>
+            <button class="toggle-btn" id="btnELA">Error level heatmap</button>
+          </div>
+        </div>
+        <span class="reset-link" id="resetLink">Analyze another document</span>
+      </div>
+
+      <div class="panel">
+        <h3>ASSESSMENT</h3>
+        <div class="gauge-row">
+          <div class="gauge-num" id="scoreNum">—</div>
+          <div class="gauge-label">Trust score
+            <strong id="scoreLabel">Analyzing…</strong>
+          </div>
+        </div>
+        <ul class="checklist" id="checklist"></ul>
+        <h3>METADATA</h3>
+        <table class="meta-table" id="metaTable"></table>
+      </div>
+    </div>
+  </section>
+
+  <section id="checksum">
+    <h3>Checksum validator</h3>
+    <p>Many official documents embed a mathematical check digit — a credit card number, an IBAN, or a passport MRZ field. Verify one here to see if the digits are internally consistent.</p>
+    <div class="csum-row">
+      <select id="csumType">
+        <option value="luhn">Card number (Luhn)</option>
+        <option value="iban">IBAN</option>
+        <option value="mrz">MRZ field + check digit</option>
+      </select>
+      <input type="text" id="csumInput" placeholder="e.g. 4111 1111 1111 1111">
+      <button id="csumBtn">Validate</button>
+    </div>
+    <div id="csum-result"></div>
+  </section>
+
+  <footer>
+    This tool applies well-known, publicly documented forensic heuristics (error level analysis, OCR, metadata inspection, checksum formulas). Uploaded files are sent to the Scrutiny API backend above for analysis, then discarded unless the server is configured to retain them. Results are indicative, not a definitive determination of authenticity; no automated check is 100% foolproof, and edge cases (re-scanned originals, screenshots, low-quality photos) can trigger false flags.
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+if (typeof pdfjsLib !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const results = document.getElementById('results');
+const canvasOriginal = document.getElementById('canvasOriginal');
+const canvasELA = document.getElementById('canvasELA');
+const btnOriginal = document.getElementById('btnOriginal');
+const btnELA = document.getElementById('btnELA');
+const scoreNum = document.getElementById('scoreNum');
+const scoreLabel = document.getElementById('scoreLabel');
+const checklistEl = document.getElementById('checklist');
+const metaTable = document.getElementById('metaTable');
+const resetLink = document.getElementById('resetLink');
+const apiBaseInput = document.getElementById('apiBase');
+const apiStatus = document.getElementById('apiStatus');
+
+function getApiBase(){
+  return apiBaseInput.value.trim().replace(/\/+$/, '');
+}
+
+/* ---------- Backend connection check ---------- */
+async function checkBackend(){
+  apiStatus.textContent = '● checking…';
+  apiStatus.className = 'api-status';
+  try {
+    const res = await fetch(getApiBase() + '/health');
+    if (!res.ok) throw new Error();
+    apiStatus.textContent = '● connected';
+    apiStatus.className = 'api-status ok';
+  } catch {
+    apiStatus.textContent = '● not reachable';
+    apiStatus.className = 'api-status fail';
+  }
+}
+apiBaseInput.addEventListener('change', checkBackend);
+checkBackend();
+
+/* ---------- Upload handling ---------- */
+dropzone.addEventListener('click', () => fileInput.click());
+['dragenter','dragover'].forEach(evt => dropzone.addEventListener(evt, e => {
+  e.preventDefault(); dropzone.classList.add('drag');
+}));
+['dragleave','drop'].forEach(evt => dropzone.addEventListener(evt, e => {
+  e.preventDefault(); dropzone.classList.remove('drag');
+}));
+dropzone.addEventListener('drop', e => {
+  const file = e.dataTransfer.files[0];
+  if (file) handleFile(file);
+});
+fileInput.addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file) handleFile(file);
+});
+resetLink.addEventListener('click', () => {
+  results.classList.remove('active');
+  fileInput.value = '';
+  window.scrollTo({top:0, behavior:'smooth'});
+});
+btnOriginal.addEventListener('click', () => {
+  btnOriginal.classList.add('active'); btnELA.classList.remove('active');
+  canvasOriginal.style.display='block'; canvasELA.style.display='none';
+});
+btnELA.addEventListener('click', () => {
+  if (btnELA.disabled) return;
+  btnELA.classList.add('active'); btnOriginal.classList.remove('active');
+  canvasELA.style.display='block'; canvasOriginal.style.display='none';
+});
+
+function handleFile(file){
+  results.classList.add('active');
+  scoreNum.textContent = '—';
+  scoreLabel.textContent = 'Uploading to backend…';
+  checklistEl.innerHTML = '';
+  metaTable.innerHTML = '';
+  btnELA.disabled = true;
+  btnOriginal.click();
+  results.scrollIntoView({behavior:'smooth', block:'start'});
+
+  // Instant local preview only — the actual analysis happens on the backend.
+  if (file.type === 'application/pdf') {
+    renderPdfPreview(file).catch(() => {});
+  } else if (file.type.startsWith('image/')) {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => drawToCanvas(canvasOriginal, img);
+    img.src = url;
+  }
+
+  analyzeOnBackend(file);
+}
+
+function drawToCanvas(canvas, img){
+  const maxDim = 900;
+  let w = img.naturalWidth, h = img.naturalHeight;
+  if (w > maxDim) { h = h * (maxDim/w); w = maxDim; }
+  canvas.width = w; canvas.height = h;
+  canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+}
+
+async function renderPdfPreview(file){
+  if (typeof pdfjsLib === 'undefined') return;
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({scale: 1.4});
+  canvasOriginal.width = Math.min(900, viewport.width);
+  const scaleFactor = canvasOriginal.width / viewport.width;
+  canvasOriginal.height = viewport.height * scaleFactor;
+  await page.render({
+    canvasContext: canvasOriginal.getContext('2d'),
+    viewport: page.getViewport({scale: 1.4 * scaleFactor})
+  }).promise;
+}
+
+/* ---------- Talk to the FastAPI backend ---------- */
+async function analyzeOnBackend(file){
+  const apiBase = getApiBase();
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res = await fetch(apiBase + '/analyze', { method: 'POST', body: formData });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`${res.status} ${res.statusText} — ${errText}`);
+    }
+    const data = await res.json();
+    renderBackendResult(data, apiBase);
+    apiStatus.textContent = '● connected';
+    apiStatus.className = 'api-status ok';
+  } catch (err) {
+    scoreLabel.textContent = 'Could not reach backend';
+    addCheckItem('fail', `Request failed: ${err.message}. Make sure the FastAPI server is running at ${apiBase} (uvicorn app.main:app --reload) and that this page's origin is allowed by its CORS settings.`);
+    apiStatus.textContent = '● not reachable';
+    apiStatus.className = 'api-status fail';
+  }
+}
+
+function renderBackendResult(data, apiBase){
+  const score = data.trust_score;
+  const labelMap = {
+    likely_authentic: 'Likely authentic',
+    inconsistencies_found: 'Some inconsistencies found',
+    high_risk: 'High risk of tampering'
+  };
+
+  scoreNum.textContent = score;
+  scoreNum.style.color = score >= 80 ? 'var(--scan)' : score >= 55 ? 'var(--warn)' : 'var(--danger)';
+  scoreLabel.textContent = labelMap[data.risk_label] || data.risk_label;
+
+  checklistEl.innerHTML = '';
+  if (!data.flags || data.flags.length === 0) {
+    addCheckItem('pass', 'No issues detected by the backend pipeline');
+  } else {
+    data.flags.forEach(f => addCheckItem(f.level, f.text));
+  }
+  if (data.ela_mean_diff != null) {
+    addCheckItem(
+      data.ela_hot_ratio <= 0.02 ? 'pass' : 'fail',
+      `Error level analysis: ${data.ela_mean_diff.toFixed(2)} avg. diff, ${(data.ela_hot_ratio*100).toFixed(1)}% flagged pixels`
+    );
+  }
+  if (data.ocr_mean_confidence != null) {
+    addCheckItem(
+      data.ocr_mean_confidence > 60 ? 'pass' : 'warn',
+      `OCR mean confidence: ${data.ocr_mean_confidence.toFixed(1)}%`
+    );
+  }
+  if (data.deep_model_score != null) {
+    addCheckItem(
+      data.deep_model_score > 0.7 ? 'fail' : data.deep_model_score > 0.4 ? 'warn' : 'pass',
+      `Deep tampering model score: ${data.deep_model_score.toFixed(2)}`
+    );
+  }
+
+  metaTable.innerHTML = '';
+  flattenMeta(data.metadata_json || {}).forEach(([k, v]) => {
+    const tr = document.createElement('tr');
+    const tdKey = document.createElement('td'); tdKey.textContent = k;
+    const tdVal = document.createElement('td'); tdVal.textContent = String(v);
+    tr.appendChild(tdKey); tr.appendChild(tdVal);
+    metaTable.appendChild(tr);
+  });
+
+  if (data.heatmap_url) {
+    const heatImg = new Image();
+    heatImg.onload = () => {
+      canvasELA.width = canvasOriginal.width || heatImg.naturalWidth;
+      canvasELA.height = canvasOriginal.height || heatImg.naturalHeight;
+      canvasELA.getContext('2d').drawImage(heatImg, 0, 0, canvasELA.width, canvasELA.height);
+      btnELA.disabled = false;
+    };
+    heatImg.src = apiBase + data.heatmap_url;
+  } else {
+    btnELA.disabled = true;
+  }
+}
+
+function flattenMeta(obj, prefix = ''){
+  let rows = [];
+  Object.entries(obj).forEach(([k, v]) => {
+    const label = prefix ? `${prefix} › ${k}` : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      rows = rows.concat(flattenMeta(v, label));
+    } else if (v !== null && v !== undefined && v !== '') {
+      rows.push([label, v]);
+    }
+  });
+  return rows;
+}
+
+function addCheckItem(level, text){
+  const li = document.createElement('li');
+  const mark = document.createElement('span');
+  mark.className = 'mark ' + level;
+  mark.textContent = level === 'pass' ? '✓' : level === 'warn' ? '!' : '✕';
+  const span = document.createElement('span');
+  span.textContent = text;
+  li.appendChild(mark); li.appendChild(span);
+  checklistEl.appendChild(li);
+}
+
+/* ---------- Checksum validator: tries the backend, falls back to local JS ---------- */
+document.getElementById('csumBtn').addEventListener('click', async () => {
+  const type = document.getElementById('csumType').value;
+  const raw = document.getElementById('csumInput').value.trim();
+  const out = document.getElementById('csum-result');
+  out.className = '';
+  if (!raw) { out.textContent = 'Enter a value to validate.'; return; }
+  out.textContent = 'Checking…';
+
+  try {
+    const res = await fetch(getApiBase() + '/checksum', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, value: raw })
+    });
+    if (!res.ok) throw new Error('backend error');
+    const data = await res.json();
+    out.textContent = (data.valid ? '✓ ' : '✕ ') + data.detail;
+    out.className = data.valid ? 'pass' : 'fail';
+  } catch {
+    const result = localChecksum(type, raw);
+    out.textContent = result.text + ' (computed locally — backend unreachable)';
+    out.className = result.ok ? 'pass' : 'fail';
+  }
+});
+
+function localChecksum(type, raw){
+  if (type === 'luhn') {
+    const digits = raw.replace(/[^0-9]/g, '');
+    const ok = digits.length >= 8 && luhnCheck(digits);
+    return { ok, text: ok ? 'Passes the Luhn checksum.' : 'Fails the Luhn checksum.' };
+  }
+  if (type === 'iban') {
+    const clean = raw.replace(/\s/g, '').toUpperCase();
+    const ok = ibanCheck(clean);
+    return { ok, text: ok ? 'Passes the IBAN mod-97 checksum.' : 'Fails the IBAN checksum.' };
+  }
+  if (type === 'mrz') {
+    const clean = raw.replace(/\s/g, '').toUpperCase();
+    if (clean.length < 2) return { ok: false, text: 'Enter the MRZ field followed by its check digit.' };
+    const body = clean.slice(0, -1), provided = clean.slice(-1);
+    const expected = mrzCheckDigit(body);
+    const ok = String(expected) === provided;
+    return { ok, text: ok ? 'Check digit matches.' : `Check digit mismatch (expected ${expected}).` };
+  }
+  return { ok: false, text: 'Unknown type.' };
+}
+
+function luhnCheck(digits){
+  let sum = 0, alt = false;
+  for (let i = digits.length-1; i>=0; i--){
+    let n = parseInt(digits[i],10);
+    if (alt){ n*=2; if (n>9) n-=9; }
+    sum += n; alt = !alt;
+  }
+  return sum % 10 === 0;
+}
+function ibanCheck(iban){
+  if (!/^[A-Z0-9]{15,34}$/.test(iban)) return false;
+  const rearranged = iban.slice(4) + iban.slice(0,4);
+  const numeric = rearranged.split('').map(ch => {
+    const code = ch.charCodeAt(0);
+    return code >= 65 && code <= 90 ? (code-55).toString() : ch;
+  }).join('');
+  let remainder = numeric;
+  while (remainder.length > 2){
+    const chunk = remainder.slice(0, 9);
+    remainder = (parseInt(chunk,10) % 97).toString() + remainder.slice(chunk.length);
+  }
+  return parseInt(remainder,10) % 97 === 1;
+}
+function mrzCheckDigit(str){
+  const weights = [7,3,1];
+  let sum = 0;
+  for (let i=0;i<str.length;i++){
+    const ch = str[i];
+    let val;
+    if (ch === '<') val = 0;
+    else if (/[0-9]/.test(ch)) val = parseInt(ch,10);
+    else val = ch.charCodeAt(0) - 55; // A=10 ... Z=35
+    sum += val * weights[i % 3];
+  }
+  return sum % 10;
+}
+</script>
+</body>
+</html>
